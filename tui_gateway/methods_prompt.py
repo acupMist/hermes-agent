@@ -94,15 +94,20 @@ def _resolve_truncate_row_id(session: dict, history: list, target_row_id: int):
     Prefer in-memory ``_row_id`` / ``row_id`` stamps. When a live turn rewrote ``session["history"]``
     without stamps (provider-format messages), load the session's durable transcript with
     ``include_row_ids=True`` and map the matched user-turn ordinal onto the live list. See #82959.
+
+    Load the UNREPAIRED durable copy. ``repair_alternation=True`` merges a following
+    ``display_kind`` user-role marker (model_switch after a billing-failed first turn) into
+    the real user row, so content no longer matches live and the mapping 4018s even though
+    the target row is still in state.db.
     """
     if (hit := _find_user_turn_by_row_id(history, target_row_id)) is not None:
         return hit
-    db_history = _load_durable_truncation_history(session)
+    db_history = _load_durable_truncation_history(session, repair_alternation=False)
     if db_history is None:
         return None
-    # Heal missing stamps only when EVERY pair agrees: the durable copy is alternation-
-    # repaired while the live list can carry optimistic/marker rows, and a stamp on a
-    # misaligned pair is sticky (re-aims every later rewind at the wrong durable row).
+    # Heal missing stamps only when EVERY pair agrees: live can carry optimistic/marker
+    # rows the durable copy does not, and a stamp on a misaligned pair is sticky
+    # (re-aims every later rewind at the wrong durable row).
     if len(db_history) == len(history) and all(
             _mem_db_pair_agrees(mem, db_msg) for mem, db_msg in zip(history, db_history)):
         for mem, db_msg in zip(history, db_history):
@@ -114,8 +119,8 @@ def _resolve_truncate_row_id(session: dict, history: list, target_row_id: int):
         return None
     db_ord, db_idx = db_hit
     mem_user_indices = _history_user_indices(history)
-    # Same-ordinal mapping across lists that can diverge (repair may merge a user;user
-    # pair): trust it only when the mapped live turn shows the durable target's content.
+    # Same-ordinal mapping across lists that can diverge: trust it only when the
+    # mapped live turn shows the durable target's content.
     if db_ord >= len(mem_user_indices) or not _mem_db_pair_agrees(
             history[mem_user_indices[db_ord]], db_history[db_idx]):
         return None

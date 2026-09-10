@@ -21611,6 +21611,71 @@ def test_prompt_submit_row_id_real_sessiondb_resolve_without_memory_stamps(
         server._sessions.pop(sid, None)
 
 
+def test_prompt_submit_row_id_survives_model_switch_after_failed_turn(
+    monkeypatch, tmp_path
+):
+    """Restore after a failed first turn + model_switch must still resolve the user row.
+
+    Billing-fail then model switch persists ``user`` + ``user(display_kind=model_switch)``.
+    Alternation repair merges those into one row whose content no longer matches live,
+    so a repaired durable lookup 4018s ('target user message is no longer in session
+    history') even though the sqlite row is still active. Resolution must read the
+    unrepaired transcript.
+    """
+    from hermes_state import SessionDB
+
+    db = SessionDB(db_path=tmp_path / "rowid-model-switch.db")
+    session_key = "failed-turn-then-switch"
+    db.create_session(session_key, "desktop")
+    user_text = "请根据图片帮我生成POCT 酸碱度的折线图"
+    switch_text = (
+        "[System: The active model for this chat has changed to glm-5.3-flash "
+        "via provider b-ai. From this point forward, use this runtime metadata "
+        "when answering questions about what model/provider is active.]"
+    )
+    user_row_id = db.append_message(session_key, "user", user_text)
+    db.append_message(session_key, "user", switch_text, display_kind="model_switch")
+
+    # Repair WOULD merge the marker into the user row — that's the production footgun.
+    repaired = db.get_messages_as_conversation(
+        session_key, repair_alternation=True, include_row_ids=True)
+    assert len(repaired) == 1
+    assert switch_text in (repaired[0].get("content") or "")
+
+    live_history = [
+        {"role": "user", "content": user_text},
+        {"role": "user", "content": switch_text, "display_kind": "model_switch"},
+    ]
+    sess = _session(history=list(live_history), session_key=session_key)
+    sid = "failed-turn-switch-sid"
+    server._sessions[sid] = sess
+    monkeypatch.setattr(server, "_get_db", lambda: db)
+    monkeypatch.setattr(server, "_start_agent_build", lambda *a, **k: None)
+    monkeypatch.setattr(server, "_start_inflight_turn", lambda *a, **k: None)
+
+    try:
+        resp = server.handle_request(
+            {
+                "id": "1",
+                "method": "prompt.submit",
+                "params": {
+                    "session_id": sid,
+                    "text": user_text,
+                    "truncate_before_row_id": user_row_id,
+                    "confirm_truncate": True,
+                    "confirm_empty_truncate": True,
+                },
+            }
+        )
+        assert resp.get("error") is None, resp
+        # Cut is the first (only) user turn: live prefix is empty.
+        assert sess["history"] == []
+        active = db.get_messages_as_conversation(session_key)
+        assert active == []
+    finally:
+        server._sessions.pop(sid, None)
+
+
 def test_prompt_submit_row_id_real_sessiondb_unknown_refuses_despite_ordinal(
     monkeypatch, tmp_path
 ):
