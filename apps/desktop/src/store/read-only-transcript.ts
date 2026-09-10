@@ -8,16 +8,15 @@
  * read that needs no live-session routing at all.
  *
  * `resumeWithStoredTranscriptFallback` wraps a live `session.resume` dispatch
- * with exactly that recovery: when — and only when — the resume fails with
- * `SessionOwnerResolutionError` (owner genuinely unresolvable under registry
- * topology), it opens the stored transcript read-only instead of dead-ending.
- * Every other failure keeps its existing semantics. Rows whose owner IS
- * resolvable never take this path, and a later successful live resume (e.g.
- * after the single-match owner backfill stamps the row) clears the flag.
+ * with exactly that recovery: when the resume fails with
+ * `SessionOwnerResolutionError` (owner unresolvable) **or** `session not found`
+ * (stale runtime id / wrong-profile 4007 while the row is still in state.db),
+ * it opens the stored transcript read-only instead of dead-ending. Other
+ * failures keep their existing semantics. A later successful live resume
+ * clears the flag.
  */
 import { atom } from 'nanostores'
 
-import type { SessionOwnerResolutionError } from './session-owner-resolution'
 import { isSessionOwnerResolutionError } from './session-owner-resolution'
 
 /** Stored session ids currently open as read-only stored transcripts. The
@@ -68,7 +67,7 @@ export function isReadOnlyRuntimeId(runtimeId: null | string | undefined): boole
 
 export type StoredTranscriptResumeOutcome<TResumed, TTranscript> =
   | { mode: 'live'; resumed: TResumed }
-  | { error: SessionOwnerResolutionError; mode: 'read-only'; transcript: TTranscript }
+  | { error: Error; mode: 'read-only'; transcript: TTranscript }
 
 /**
  * Dispatch a live resume, recovering into a read-only stored-transcript open
@@ -76,11 +75,16 @@ export type StoredTranscriptResumeOutcome<TResumed, TTranscript> =
  * stored read (REST `/api/sessions/:id/messages`) that performs NO gateway
  * routing — that is the whole point of the recovery path.
  *
- * When even the stored read fails, the ORIGINAL owner-resolution error is
- * rethrown: the caller's existing error UX (retry latch, stranded screen)
- * stays authoritative and no misleading transport error replaces the real
- * diagnosis.
+ * When even the stored read fails, the ORIGINAL resume error is rethrown:
+ * the caller's existing error UX (retry latch, stranded screen) stays
+ * authoritative and no misleading transport error replaces the real diagnosis.
  */
+function isSessionNotFoundResumeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+
+  return /session not found/i.test(message)
+}
+
 export async function resumeWithStoredTranscriptFallback<TResumed, TTranscript>(
   storedSessionId: string,
   resume: () => Promise<TResumed>,
@@ -95,7 +99,7 @@ export async function resumeWithStoredTranscriptFallback<TResumed, TTranscript>(
 
     return { mode: 'live', resumed }
   } catch (error) {
-    if (!isSessionOwnerResolutionError(error)) {
+    if (!isSessionOwnerResolutionError(error) && !isSessionNotFoundResumeError(error)) {
       throw error
     }
 
@@ -109,6 +113,6 @@ export async function resumeWithStoredTranscriptFallback<TResumed, TTranscript>(
 
     markStoredTranscriptReadOnly(storedSessionId)
 
-    return { error, mode: 'read-only', transcript }
+    return { error: error instanceof Error ? error : new Error(String(error)), mode: 'read-only', transcript }
   }
 }

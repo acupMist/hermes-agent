@@ -577,6 +577,21 @@ def _resume_locate(ctx: _Resume) -> dict | None:
     if ctx.found:
         ctx.target = ctx.found["id"]
         return None
+    # Desktop tiles/routes sometimes resume by the live 8-hex runtime sid, not
+    # the stored YYYYMMDD_… key. A still-live runtime must not 4007 — rewrite
+    # onto its session_key so the rest of resume (reuse-live / cold) proceeds.
+    live_direct = _sessions.get(str(ctx.target))
+    if (
+        isinstance(live_direct, dict)
+        and not live_direct.get("_finalized")
+        and _live_profile_matches(live_direct, ctx.profile_home)
+    ):
+        key = str(live_direct.get("session_key") or "").strip()
+        if key:
+            ctx.found = ctx.db.get_session(key) or {"id": key}
+            ctx.target = key
+            return None
+        return _resume_live_unpersisted(ctx, str(ctx.target), live_direct)
     if ctx.lazy and _child_run_active(ctx.target):
         # Fresh subagent watch window: `subagent.start` relays BEFORE the child's first DB flush. Proceed lazily
         # with empty history — the live mirror streams the turn and the row exists by upgrade time.

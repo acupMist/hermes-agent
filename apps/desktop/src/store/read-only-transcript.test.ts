@@ -105,6 +105,26 @@ describe('read-only stored-transcript resume (#94724 no-owner recovery)', () => 
     expect(isStoredTranscriptReadOnly('legacy-3')).toBe(false)
   })
 
+  it('opens the stored transcript read-only when live resume 404s but history is intact', async () => {
+    const transcript = { messages: [{ content: 'still here', role: 'user' }], session_id: 'stored-404' }
+
+    const outcome = await resumeWithStoredTranscriptFallback(
+      'stored-404',
+      async () => {
+        throw new Error('session not found')
+      },
+      async () => transcript
+    )
+
+    expect(outcome.mode).toBe('read-only')
+
+    if (outcome.mode === 'read-only') {
+      expect(outcome.transcript).toBe(transcript)
+    }
+
+    expect(isStoredTranscriptReadOnly('stored-404')).toBe(true)
+  })
+
   it('rethrows the ORIGINAL owner error when even the stored read fails', async () => {
     $connectionsRegistry.set(registry('gw-a', 'gw-b'))
     $profiles.set([{ name: 'default' }, { name: 'researcher' }] as never)

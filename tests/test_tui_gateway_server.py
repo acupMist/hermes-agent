@@ -4917,6 +4917,55 @@ def test_session_resume_does_not_rebind_after_client_gone_interrupt_claim(monkey
         server._sessions.pop("live-sid", None)
 
 
+def test_session_resume_accepts_live_runtime_id(monkeypatch):
+    """Desktop tiles may resume by the 8-hex runtime sid. A still-live
+    persisted runtime must not 4007 — rewrite onto the stored session_key.
+    """
+
+    class _DB:
+        def get_session(self, session_id):
+            if session_id == "20260910_162454_945167":
+                return {"id": session_id, "cwd": "/tmp", "message_count": 2}
+            return None
+
+        def get_session_by_title(self, _title):
+            return None
+
+        def resolve_resume_session_id(self, session_id):
+            return session_id
+
+        def get_compression_tip(self, session_id):
+            return session_id
+
+        def reopen_session(self, _session_id):
+            pass
+
+        def get_resume_conversations(self, _session_id):
+            return ([{"role": "user", "content": "hi"}], [{"role": "user", "content": "hi"}])
+
+        def get_ancestor_display_prefix(self, _sid):
+            return []
+
+    live = _session(session_key="20260910_162454_945167", history=[{"role": "user", "content": "hi"}])
+    server._sessions["e365db0d"] = live
+    monkeypatch.setattr(server, "_get_db", lambda: _DB())
+    monkeypatch.setattr(server, "_enable_gateway_prompts", lambda: None)
+
+    try:
+        resp = server.handle_request(
+            {
+                "id": "1",
+                "method": "session.resume",
+                "params": {"session_id": "e365db0d", "omit_messages": True},
+            }
+        )
+        assert resp.get("error") is None, resp
+        assert resp["result"]["session_id"] == "e365db0d"
+        assert resp["result"].get("resumed") in ("20260910_162454_945167", "e365db0d")
+    finally:
+        server._sessions.pop("e365db0d", None)
+
+
 def test_ws_orphan_reap_defers_running_turn_for_active_delegation(monkeypatch):
     callbacks = []
     interrupted = []

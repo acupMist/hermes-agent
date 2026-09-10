@@ -434,7 +434,11 @@ export function SessionTilePane({ storedSessionId }: { storedSessionId: string }
         // before releasing this resume attempt, then fail safe: a tile may be
         // retried by the user, but must never be deleted on an inconclusive
         // reconnect-time lookup.
-        const durableSession = await resolveStoredSession(storedSessionId, ownerRoute).catch(() => undefined)
+        const durableSession =
+          (await resolveStoredSession(storedSessionId, ownerRoute).catch(() => undefined)) ??
+          // Stale tile ownerRoute (connection id from a previous backend) is
+          // fail-closed; probe without it before declaring the chat gone.
+          (await resolveStoredSession(storedSessionId).catch(() => undefined))
         const current = $sessionTiles.get().find(candidate => candidate.storedSessionId === storedSessionId)
         const error = sessionTileResumeFailure(message, Boolean(durableSession), Boolean(current && !current.runtimeId))
 
@@ -464,7 +468,18 @@ export function SessionTilePane({ storedSessionId }: { storedSessionId: string }
         <div className="max-w-[24rem] space-y-2 text-center font-mono text-[11px]">
           <div className="text-(--ui-danger,#f87171)">Couldn't open this session</div>
           <div className="break-words text-(--ui-text-quaternary)">{tile.error}</div>
-          <Button onClick={() => patchSessionTile(storedSessionId, { error: undefined })} size="sm" variant="outline">
+          <Button
+            onClick={() =>
+              patchSessionTile(storedSessionId, {
+                error: undefined,
+                // Drop a stale connection-tagged route so Retry can re-resolve
+                // the owner instead of 404ing the same dead backend again.
+                ownerRoute: undefined
+              })
+            }
+            size="sm"
+            variant="outline"
+          >
             Retry
           </Button>
         </div>
