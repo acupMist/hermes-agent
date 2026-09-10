@@ -247,7 +247,9 @@ TODO_SCHEMA = {
                         },
                         "content": {
                             "type": "string",
-                            "description": "Task description"
+                            "description": (
+                                "Task description. Omit on merge to leave the existing text unchanged."
+                            )
                         },
                         "status": {
                             "type": "string",
@@ -258,7 +260,9 @@ TODO_SCHEMA = {
                             "description": "Optional id of another item, making this a nested subtask. Omit for top-level."
                         }
                     },
-                    "required": ["id", "content", "status"]
+                    # id is the merge key. content/status default in the store so a
+                    # status-only merge patch is schema-valid for deferred tool_call.
+                    "required": ["id"]
                 }
             },
             "merge": {
