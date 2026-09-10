@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { $gatewayState, $sessions, setSessions } from '@/store/session'
 import { $sessionTiles } from '@/store/session-states'
 
-import { sessionTileResumeFailure, shouldResumeSessionTile, startUnrestoredTileTitleBackfill } from './session-tile'
+import { sessionTileResumeFailure, shouldDiscardUnavailableTile, shouldResumeSessionTile, startUnrestoredTileTitleBackfill } from './session-tile'
 
 describe('shouldResumeSessionTile', () => {
   const live = {
@@ -46,6 +46,14 @@ describe('sessionTileResumeFailure', () => {
 
   it('does not overwrite a tile that rebound while the lookup was pending', () => {
     expect(sessionTileResumeFailure('session not found', true, false)).toBeUndefined()
+  })
+})
+
+describe('shouldDiscardUnavailableTile', () => {
+  it('closes a ghost tile only when the gateway is up and the row is gone', () => {
+    expect(shouldDiscardUnavailableTile({ durableSessionFound: false, gatewayOpen: true })).toBe(true)
+    expect(shouldDiscardUnavailableTile({ durableSessionFound: false, gatewayOpen: false })).toBe(false)
+    expect(shouldDiscardUnavailableTile({ durableSessionFound: true, gatewayOpen: true })).toBe(false)
   })
 })
 

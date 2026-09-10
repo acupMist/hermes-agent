@@ -100,6 +100,19 @@ export function sessionTileResumeFailure(
   return 'Session unavailable — you can retry resuming it.'
 }
 
+/** Ghost tile: the stored id is gone from every profile. Retry would 404 forever. */
+export function isUnavailableSessionTileError(error: string | undefined): boolean {
+  return Boolean(error && /^Session unavailable/i.test(error))
+}
+
+/** Gateway is up and the durable row is confirmed missing — close, don't Retry. */
+export function shouldDiscardUnavailableTile(opts: {
+  durableSessionFound: boolean
+  gatewayOpen: boolean
+}): boolean {
+  return opts.gatewayOpen && !opts.durableSessionFound
+}
+
 /** Should this tile dispatch a `session.resume`?
  *
  *  - The gateway must be OPEN: persisted tiles mount at boot while it is still
@@ -442,6 +455,11 @@ export function SessionTilePane({ storedSessionId }: { storedSessionId: string }
         const current = $sessionTiles.get().find(candidate => candidate.storedSessionId === storedSessionId)
         const error = sessionTileResumeFailure(message, Boolean(durableSession), Boolean(current && !current.runtimeId))
 
+        if (shouldDiscardUnavailableTile({ durableSessionFound: Boolean(durableSession), gatewayOpen })) {
+          closeSessionTile(storedSessionId)
+          return
+        }
+
         if (error) {
           patchSessionTile(storedSessionId, { error })
         }
@@ -469,18 +487,23 @@ export function SessionTilePane({ storedSessionId }: { storedSessionId: string }
           <div className="text-(--ui-danger,#f87171)">Couldn't open this session</div>
           <div className="break-words text-(--ui-text-quaternary)">{tile.error}</div>
           <Button
-            onClick={() =>
+            onClick={() => {
+              if (isUnavailableSessionTileError(tile.error)) {
+                closeSessionTile(storedSessionId)
+                return
+              }
+
               patchSessionTile(storedSessionId, {
                 error: undefined,
                 // Drop a stale connection-tagged route so Retry can re-resolve
                 // the owner instead of 404ing the same dead backend again.
                 ownerRoute: undefined
               })
-            }
+            }}
             size="sm"
             variant="outline"
           >
-            Retry
+            {isUnavailableSessionTileError(tile.error) ? 'Close' : 'Retry'}
           </Button>
         </div>
       </div>
